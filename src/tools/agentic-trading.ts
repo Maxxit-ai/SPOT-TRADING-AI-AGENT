@@ -301,7 +301,7 @@ export async function getTradingContext({
     const tradeStateManager = agenticOrchestrator.tradeStateManager;
     const activeTrades = tradeStateManager.getActiveTrades();
     const tokenTrades = activeTrades.filter(
-      (trade) => trade.tokenSymbol === tokenSymbol
+      (trade: any) => trade.tokenSymbol === tokenSymbol
     );
 
     return `📊 TRADING CONTEXT FOR ${tokenSymbol}
@@ -317,7 +317,7 @@ export async function getTradingContext({
 ${tokenTrades
   .slice(0, 3)
   .map(
-    (trade) =>
+    (trade: any) =>
       `• ${trade.userId}: ${trade.status} (Entry: $${trade.entryPrice})`
   )
   .join("\n")}

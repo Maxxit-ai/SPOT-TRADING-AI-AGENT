@@ -71,7 +71,9 @@ export class FlexibleDEXRouter {
   /**
    * 0x Protocol quote (already perfect for your needs!)
    */
-  private async get0xQuote(request: QuoteRequest): Promise<QuoteResponse> {
+  private async get0xQuote(
+    request: QuoteRequest
+  ): Promise<QuoteResponse | null> {
     try {
       const response = await axios.get("https://api.0x.org/swap/v1/quote", {
         params: {
@@ -82,7 +84,7 @@ export class FlexibleDEXRouter {
           slippagePercentage: (request.slippage || 0.5) / 100,
         },
         headers: {
-          "0x-api-key": process.env.ZEROX_API_KEY,
+          "0x-api-key": process.env["ZEROX_API_KEY"],
         },
         timeout: 5000,
       });
@@ -124,7 +126,9 @@ export class FlexibleDEXRouter {
   /**
    * Future: Easy to add 1inch when you want more options
    */
-  private async get1inchQuote(request: QuoteRequest): Promise<QuoteResponse> {
+  private async get1inchQuote(
+    request: QuoteRequest
+  ): Promise<QuoteResponse | null> {
     // Implementation would go here when you're ready
     // For now, just return null
     return null;
@@ -135,7 +139,7 @@ export class FlexibleDEXRouter {
    */
   private async getCustomAggregatorQuote(
     request: QuoteRequest
-  ): Promise<QuoteResponse> {
+  ): Promise<QuoteResponse | null> {
     // Implementation would go here when you're ready
     return null;
   }

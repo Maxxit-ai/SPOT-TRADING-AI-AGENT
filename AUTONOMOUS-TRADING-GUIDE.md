@@ -68,7 +68,7 @@ This autonomous AI trading agent automatically executes token trades for multipl
 cp env.example .env
 
 # Update MongoDB configuration
-MONGODB_URI=mongodb+srv://purvikpanchal:q90hn47dPYehXIrk@cluster0.ty5vk.mongodb.net/
+MONGODB_URI=
 SIGNAL_FLOW_DB=ctxbt-signal-flow
 SIGNAL_FLOW_COLLECTION=trading-signals
 SAFE_DEPLOYMENT_DB=safe-deployment-service

@@ -7,11 +7,18 @@ import morgan from "morgan";
 import dotenv from "dotenv";
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
-import mongoose from "mongoose";
+import { MongoClient, Db } from "mongodb";
 import { createClient } from "redis";
 
 // Import our AI Trading Agent
 import AITradingAgent from "./agent";
+// Import API Signal Processor
+import ApiSignalProcessor from "./services/ApiSignalProcessor";
+import DatabaseService from "./services/DatabaseService";
+import TradeStateManager from "./services/TradeStateManager";
+import TradeExecutionService from "./services/TradeExecutionService";
+import PriceMonitoringService from "./services/PriceMonitoringService";
+import { ApiSignal } from "./services/ApiSignalProcessor";
 
 // Load environment variables
 dotenv.config();
@@ -27,6 +34,7 @@ interface ServerConfig {
 interface DatabaseConfig {
   mongoUri: string;
   redisUrl: string;
+  redisEnabled: boolean;
 }
 
 class AITradingServer {
@@ -34,7 +42,11 @@ class AITradingServer {
   private server: any;
   private io: SocketIOServer;
   private redis: any;
+  private mongoClient!: MongoClient;
+  private mongoDB!: Db;
   private tradingAgent!: AITradingAgent;
+  private apiSignalProcessor!: ApiSignalProcessor;
+  private dbService!: DatabaseService;
   private config: ServerConfig;
   private dbConfig: DatabaseConfig;
   private isShuttingDown: boolean = false;
@@ -44,22 +56,24 @@ class AITradingServer {
     this.server = createServer(this.app);
     this.io = new SocketIOServer(this.server, {
       cors: {
-        origin: process.env.CORS_ORIGIN || "http://localhost:3000",
+        origin: process.env["CORS_ORIGIN"] || "http://localhost:3000",
         methods: ["GET", "POST"],
       },
     });
 
     this.config = {
-      port: parseInt(process.env.PORT || "3001"),
-      nodeEnv: process.env.NODE_ENV || "development",
-      corsOrigin: process.env.CORS_ORIGIN || "http://localhost:3000",
-      rateLimit: parseInt(process.env.API_RATE_LIMIT || "100"),
+      port: parseInt(process.env["PORT"] || "3001"),
+      nodeEnv: process.env["NODE_ENV"] || "development",
+      corsOrigin: process.env["CORS_ORIGIN"] || "http://localhost:3000",
+      rateLimit: parseInt(process.env["API_RATE_LIMIT"] || "100"),
     };
 
     this.dbConfig = {
       mongoUri:
-        process.env.MONGODB_URI || "mongodb://localhost:27017/ai-trading-agent",
-      redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
+        process.env["MONGODB_URI"] ||
+        "mongodb://localhost:27017/ai-trading-agent",
+      redisUrl: process.env["REDIS_URL"] || "redis://localhost:6379",
+      redisEnabled: process.env["REDIS_ENABLED"] !== "false",
     };
 
     this.initializeMiddleware();
@@ -67,6 +81,7 @@ class AITradingServer {
     this.initializeDatabases();
     this.initializeSocketIO();
     this.initializeTradingAgent();
+    this.initializeApiSignalProcessor();
     this.setupGracefulShutdown();
   }
 
@@ -121,9 +136,12 @@ class AITradingServer {
           status: "ready",
         },
         database: {
-          mongo:
-            mongoose.connection.readyState === 1 ? "connected" : "disconnected",
-          redis: this.redis?.isReady ? "connected" : "disconnected",
+          mongo: this.mongoClient ? "connected" : "disconnected",
+          redis: this.dbConfig.redisEnabled
+            ? this.redis?.isReady
+              ? "connected"
+              : "disconnected"
+            : "disabled",
         },
       });
     });
@@ -372,6 +390,74 @@ class AITradingServer {
       }
     );
 
+    // NEW: API Signal Processing Endpoint
+    this.app.post("/api/signal/process", async (req, res) => {
+      try {
+        const signalData: ApiSignal = req.body;
+
+        // Validate required fields
+        if (!signalData) {
+          return res.status(400).json({
+            error: "Signal data is required",
+            expectedFormat: {
+              "Signal Message": "buy or sell",
+              "Token Mentioned": "TOKEN_SYMBOL",
+              TP1: "number",
+              TP2: "number",
+              SL: "number",
+              "Current Price": "number",
+              "Max Exit Time": { $date: "ISO_DATE_STRING" },
+              username: "user_id",
+              safeAddress: "0x...",
+            },
+          });
+        }
+
+        // Process the signal
+        const result =
+          await this.apiSignalProcessor.processApiSignal(signalData);
+
+        // Emit to connected clients
+        this.io.emit("signal-processed", {
+          signalId: result.signalId,
+          result,
+          timestamp: new Date(),
+        });
+
+        res.json({
+          success: true,
+          signalId: result.signalId,
+          status: result.status,
+          result,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error("Signal processing error:", error);
+        res.status(500).json({
+          error: "Failed to process signal",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    // Get signal processor status
+    this.app.get("/api/signal/status", (req, res) => {
+      try {
+        const status = this.apiSignalProcessor.getStatus();
+        res.json({
+          success: true,
+          status,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error("Error getting signal processor status:", error);
+        res.status(500).json({
+          error: "Failed to get status",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
     // 404 handler
     this.app.use("*", (req, res) => {
       res.status(404).json({
@@ -408,21 +494,34 @@ class AITradingServer {
   private async initializeDatabases(): Promise<void> {
     try {
       // MongoDB connection
-      await mongoose.connect(this.dbConfig.mongoUri);
+      this.mongoClient = new MongoClient(this.dbConfig.mongoUri);
+      await this.mongoClient.connect();
+
+      // Extract database name from URI or use default
+      const dbName =
+        new URL(this.dbConfig.mongoUri).pathname.split("/")[1] ||
+        "ai-trading-agent";
+      this.mongoDB = this.mongoClient.db(dbName);
+
       console.log("✅ MongoDB connected successfully");
 
-      // Redis connection
-      this.redis = createClient({ url: this.dbConfig.redisUrl });
+      // Redis connection (conditional)
+      if (this.dbConfig.redisEnabled) {
+        this.redis = createClient({ url: this.dbConfig.redisUrl });
 
-      this.redis.on("error", (err: Error) => {
-        console.error("❌ Redis connection error:", err);
-      });
+        this.redis.on("error", (err: Error) => {
+          console.error("❌ Redis connection error:", err);
+        });
 
-      this.redis.on("connect", () => {
-        console.log("✅ Redis connected successfully");
-      });
+        this.redis.on("connect", () => {
+          console.log("✅ Redis connected successfully");
+        });
 
-      await this.redis.connect();
+        await this.redis.connect();
+      } else {
+        console.log("ℹ️ Redis is disabled - skipping Redis initialization");
+        this.redis = null;
+      }
     } catch (error) {
       console.error("❌ Database initialization error:", error);
       process.exit(1);
@@ -465,6 +564,52 @@ class AITradingServer {
     }
   }
 
+  private initializeApiSignalProcessor(): void {
+    try {
+      // Initialize database service
+      this.dbService = new DatabaseService({
+        signalFlowUri: this.dbConfig.mongoUri,
+        signalFlowDb: "ai-trading-agent",
+        signalFlowCollection: "trading-signals",
+        safeDeploymentUri:
+          process.env["SAFE_DEPLOYMENT_URI"] || this.dbConfig.mongoUri,
+        safeDeploymentDb:
+          process.env["SAFE_DEPLOYMENT_DB"] || "safe-deployment-serive",
+        safeCollection: process.env["SAFE_COLLECTION"] || "safes",
+      });
+
+      // Initialize core services
+      const tradeStateManager = new TradeStateManager();
+      const tradeExecutionService = new TradeExecutionService();
+      const priceMonitoringService = new PriceMonitoringService();
+
+      // Initialize API signal processor
+      this.apiSignalProcessor = new ApiSignalProcessor(
+        this.dbService,
+        tradeStateManager,
+        tradeExecutionService,
+        priceMonitoringService,
+        {
+          positionSizeUsd: parseInt(
+            process.env["DEFAULT_POSITION_SIZE_USD"] || "100"
+          ),
+          maxDailyTrades: parseInt(process.env["MAX_DAILY_TRADES"] || "20"),
+          enableTrailingStop: process.env["ENABLE_TRAILING_STOP"] === "true",
+          trailingStopRetracement: parseFloat(
+            process.env["TRAILING_STOP_RETRACEMENT"] || "2"
+          ),
+          defaultSlippage: parseFloat(process.env["DEFAULT_SLIPPAGE"] || "1"),
+          gasBuffer: parseInt(process.env["GAS_BUFFER"] || "20"),
+        }
+      );
+
+      console.log("✅ API Signal Processor initialized successfully");
+    } catch (error) {
+      console.error("❌ Failed to initialize API Signal Processor:", error);
+      process.exit(1);
+    }
+  }
+
   private setupGracefulShutdown(): void {
     const gracefulShutdown = async (signal: string) => {
       console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
@@ -487,12 +632,26 @@ class AITradingServer {
         }
       }
 
+      // Stop API signal processor
+      if (this.apiSignalProcessor) {
+        try {
+          await this.apiSignalProcessor.stop();
+        } catch (error) {
+          console.error("⚠️ Error stopping API signal processor:", error);
+        }
+      }
+
       // Close server
       this.server.close(() => {
         console.log("✅ HTTP server closed");
 
         // Close database connections
-        Promise.all([mongoose.connection.close(), this.redis?.disconnect()])
+        const closePromises = [this.mongoClient.close()];
+        if (this.dbConfig.redisEnabled && this.redis) {
+          closePromises.push(this.redis.disconnect());
+        }
+
+        Promise.all(closePromises)
           .then(() => {
             console.log("✅ Database connections closed");
             console.log("🏁 Graceful shutdown complete");
@@ -527,7 +686,7 @@ class AITradingServer {
   }
 
   public start(): void {
-    this.server.listen(this.config.port, () => {
+    this.server.listen(this.config.port, async () => {
       console.log(`
 🚀 AI Trading Agent Server Started
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -537,6 +696,15 @@ class AITradingServer {
 🎯 Environment: ${this.config.nodeEnv}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       `);
+
+      // Start API signal processor
+      try {
+        await this.dbService.connect();
+        await this.apiSignalProcessor.start();
+        console.log("✅ API Signal Processor started successfully");
+      } catch (error) {
+        console.error("❌ Failed to start API Signal Processor:", error);
+      }
     });
   }
 }

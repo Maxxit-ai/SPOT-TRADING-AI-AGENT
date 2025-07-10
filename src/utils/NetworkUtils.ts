@@ -24,7 +24,7 @@ export const SUPPORTED_NETWORKS: Record<string, NetworkConfig> = {
     chainId: 1,
     name: "Ethereum Mainnet",
     rpcUrl:
-      process.env.ETHEREUM_RPC_URL ||
+      process.env["ETHEREUM_RPC_URL"] ||
       "https://mainnet.infura.io/v3/YOUR_INFURA_KEY",
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     blockExplorer: "https://etherscan.io",
@@ -35,7 +35,7 @@ export const SUPPORTED_NETWORKS: Record<string, NetworkConfig> = {
     chainId: 11155111,
     name: "Sepolia Testnet",
     rpcUrl:
-      process.env.ETHEREUM_RPC_URL ||
+      process.env["ETHEREUM_RPC_URL"] ||
       "https://ethereum-sepolia-rpc.publicnode.com",
     nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
     blockExplorer: "https://sepolia.etherscan.io",
@@ -45,7 +45,7 @@ export const SUPPORTED_NETWORKS: Record<string, NetworkConfig> = {
     networkKey: "arbitrum",
     chainId: 42161,
     name: "Arbitrum One",
-    rpcUrl: process.env.ARBITRUM_RPC_URL || "https://arb1.arbitrum.io/rpc",
+    rpcUrl: process.env["ARBITRUM_RPC_URL"] || "https://arb1.arbitrum.io/rpc",
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     blockExplorer: "https://arbiscan.io",
     safeTransactionService: "https://safe-transaction-arbitrum.safe.global",
@@ -55,7 +55,8 @@ export const SUPPORTED_NETWORKS: Record<string, NetworkConfig> = {
     chainId: 421614,
     name: "Arbitrum Sepolia",
     rpcUrl:
-      process.env.ARBITRUM_RPC_URL || "https://sepolia-rollup.arbitrum.io/rpc",
+      process.env["ARBITRUM_RPC_URL"] ||
+      "https://sepolia-rollup.arbitrum.io/rpc",
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     blockExplorer: "https://sepolia.arbiscan.io",
     safeTransactionService: "https://safe-transaction-arbitrum.safe.global",
@@ -64,7 +65,7 @@ export const SUPPORTED_NETWORKS: Record<string, NetworkConfig> = {
     networkKey: "polygon",
     chainId: 137,
     name: "Polygon Mainnet",
-    rpcUrl: process.env.POLYGON_RPC_URL || "https://polygon-rpc.com",
+    rpcUrl: process.env["POLYGON_RPC_URL"] || "https://polygon-rpc.com",
     nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 },
     blockExplorer: "https://polygonscan.com",
     safeTransactionService: "https://safe-transaction-polygon.safe.global",
@@ -73,7 +74,7 @@ export const SUPPORTED_NETWORKS: Record<string, NetworkConfig> = {
     networkKey: "base",
     chainId: 8453,
     name: "Base",
-    rpcUrl: process.env.BASE_RPC_URL || "https://mainnet.base.org",
+    rpcUrl: process.env["BASE_RPC_URL"] || "https://mainnet.base.org",
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     blockExplorer: "https://basescan.org",
     safeTransactionService: "https://safe-transaction-base.safe.global",
@@ -82,7 +83,7 @@ export const SUPPORTED_NETWORKS: Record<string, NetworkConfig> = {
     networkKey: "optimism",
     chainId: 10,
     name: "Optimism",
-    rpcUrl: process.env.OPTIMISM_RPC_URL || "https://mainnet.optimism.io",
+    rpcUrl: process.env["OPTIMISM_RPC_URL"] || "https://mainnet.optimism.io",
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     blockExplorer: "https://optimistic.etherscan.io",
     safeTransactionService: "https://safe-transaction-optimism.safe.global",
@@ -236,6 +237,7 @@ export class NetworkUtils {
     if (!tokenInfo) return false;
 
     const address = tokenInfo.addresses[networkKey];
+    if (!address) return false;
     return isNativeTokenAddress(address);
   }
 

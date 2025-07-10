@@ -1,12 +1,11 @@
 import { EventEmitter } from "events";
-import winston from "winston";
-import { ChangeStreamDocument } from "mongodb";
+import { logger } from "../config/logger";
+import ApiSignalProcessor from "./ApiSignalProcessor";
 import DatabaseService from "./DatabaseService";
 import TradeStateManager from "./TradeStateManager";
 import TradeExecutionService from "./TradeExecutionService";
 import PriceMonitoringService from "./PriceMonitoringService";
-import TradingSignalWatcher from "./TradingSignalWatcher";
-import { NetworkUtils } from "../utils/NetworkUtils";
+import { ApiSignal, ProcessedSignal } from "./ApiSignalProcessor";
 
 interface AgenticConfig {
   database: any;
@@ -18,25 +17,25 @@ interface AgenticConfig {
 /**
  * Agentic Trading Orchestrator
  *
- * This orchestrator uses AI decision-making at every step instead of automated responses.
- * The AI agent analyzes signals, makes trade decisions, and manages positions intelligently.
+ * This orchestrator coordinates API-based signal processing with AI decision-making.
+ * It integrates with the ApiSignalProcessor to handle signals received via API calls
+ * and uses AI to make intelligent trading decisions.
  */
 class AgenticTradingOrchestrator extends EventEmitter {
-  private logger: winston.Logger;
+  private logger = logger;
   private config: AgenticConfig;
-  private isWatching: boolean = false;
-  private changeStream: any = null;
+  private isActive: boolean = false;
 
-  // Core services (initialized in initializeServices)
+  // Core services
   private dbService: DatabaseService;
   private tradeStateManager: TradeStateManager;
   private tradeExecutionService: TradeExecutionService;
   private priceMonitoringService: PriceMonitoringService;
-  private tradingSignalWatcher: TradingSignalWatcher;
+  private apiSignalProcessor: ApiSignalProcessor;
   private aiAgent: any; // The AI agent that makes all decisions
 
-  // Pending decisions queue (signals waiting for AI analysis)
-  private pendingSignals: Map<string, any> = new Map();
+  // AI decision queue
+  private pendingDecisions: Map<string, any> = new Map();
 
   constructor(config: AgenticConfig) {
     super();
@@ -44,32 +43,27 @@ class AgenticTradingOrchestrator extends EventEmitter {
     this.config = config;
     this.aiAgent = config.aiAgent;
 
-    this.logger = winston.createLogger({
-      level: config.debug ? "debug" : "info",
-      format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.json()
-      ),
-      transports: [
-        new winston.transports.Console(),
-        new winston.transports.File({ filename: "agentic-trading.log" }),
-      ],
-    });
+    this.initializeServices();
+    this.setupEventHandlers();
+  }
+
+  private initializeServices(): void {
+    // Initialize database service
+    this.dbService = new DatabaseService(this.config.database);
 
     // Initialize core services
-    this.dbService = new DatabaseService(this.config.database);
     this.tradeStateManager = new TradeStateManager();
     this.tradeExecutionService = new TradeExecutionService();
     this.priceMonitoringService = new PriceMonitoringService();
 
-    // Initialize trading signal watcher for Safe execution
-    this.tradingSignalWatcher = new TradingSignalWatcher(
+    // Initialize API signal processor
+    this.apiSignalProcessor = new ApiSignalProcessor(
       this.dbService,
       this.tradeStateManager,
       this.tradeExecutionService,
       this.priceMonitoringService,
       {
-        positionSizeUsd: 100,
+        positionSizeUsd: 1,
         maxDailyTrades: 20,
         enableTrailingStop: true,
         trailingStopRetracement: 2,
@@ -79,13 +73,23 @@ class AgenticTradingOrchestrator extends EventEmitter {
     );
 
     this.logger.info(
-      "🧠 Agentic trading services initialized with Safe execution"
+      "🧠 Agentic trading services initialized with API signal processing"
     );
-
-    this.setupEventHandlers();
   }
 
   private setupEventHandlers(): void {
+    // Handle signal processing events from API Signal Processor
+    this.apiSignalProcessor.on(
+      "signalProcessed",
+      async (result: ProcessedSignal) => {
+        await this.handleSignalProcessed(result);
+      }
+    );
+
+    this.apiSignalProcessor.on("signalError", async (error: any) => {
+      await this.handleSignalError(error);
+    });
+
     // Handle price monitoring events by asking AI what to do
     this.priceMonitoringService.on("tradeExit", async (exitData) => {
       await this.handlePriceAlert(exitData);
@@ -98,13 +102,13 @@ class AgenticTradingOrchestrator extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    if (this.isWatching) {
-      this.logger.warn("Agentic trading already running");
+    if (this.isActive) {
+      this.logger.warn("Agentic trading orchestrator already running");
       return;
     }
 
     if (!this.config.enabled) {
-      this.logger.warn("Agentic trading is disabled");
+      this.logger.warn("Agentic trading orchestrator is disabled");
       return;
     }
 
@@ -114,167 +118,318 @@ class AgenticTradingOrchestrator extends EventEmitter {
       // Connect to databases
       await this.dbService.connect();
 
-      // Start price monitoring
+      // Start core services
       await this.priceMonitoringService.start();
+      await this.apiSignalProcessor.start();
 
-      // Start trading signal watcher for Safe execution
-      await this.tradingSignalWatcher.start();
-
-      // Create and setup change stream for signals
-      this.changeStream = this.dbService.createSignalChangeStream();
-
-      this.changeStream.on("change", async (change: ChangeStreamDocument) => {
-        await this.handleNewSignal(change);
-      });
-
-      this.isWatching = true;
+      this.isActive = true;
       this.logger.info(
-        "🧠 Agentic trading orchestrator started - AI is now in control"
+        "🧠 Agentic trading orchestrator started - AI is ready for API signals"
       );
       this.emit("started");
     } catch (error) {
-      this.logger.error("Failed to start agentic trading:", error);
+      this.logger.error("Failed to start agentic trading orchestrator:", error);
       throw error;
     }
   }
 
   async stop(): Promise<void> {
-    if (!this.isWatching) return;
+    if (!this.isActive) return;
 
     try {
-      if (this.changeStream) {
-        await this.changeStream.close();
-      }
+      // Stop all services
+      await this.apiSignalProcessor.stop();
       this.priceMonitoringService.stop();
-      await this.tradingSignalWatcher.stop();
       await this.dbService.disconnect();
 
-      this.isWatching = false;
-      this.logger.info("⏹️ Agentic trading stopped");
+      this.isActive = false;
+      this.logger.info("⏹️ Agentic trading orchestrator stopped");
       this.emit("stopped");
     } catch (error) {
-      this.logger.error("Error stopping agentic trading:", error);
+      this.logger.error("Error stopping agentic trading orchestrator:", error);
     }
   }
 
   /**
-   * Handle new trading signal by asking AI to analyze and decide
+   * Process a signal through the AI orchestrator
+   * This method allows external systems to send signals for AI processing
    */
-  private async handleNewSignal(change: ChangeStreamDocument): Promise<void> {
+  async processSignalWithAI(signalData: ApiSignal): Promise<ProcessedSignal> {
     try {
-      if (change.operationType !== "insert" || !change.fullDocument) {
-        return;
-      }
-
-      const signal = change.fullDocument;
-      const signalId = signal._id.toString();
-
       this.logger.info(
-        `📡 New signal received: ${signalId} - Asking AI to analyze...`
+        `🧠 Processing signal through AI orchestrator: ${signalData["Token Mentioned"]} by ${signalData.username}`
       );
 
-      // Add to pending signals for AI analysis
-      this.pendingSignals.set(signalId, signal);
+      // Ask AI to analyze the signal first
+      const aiAnalysis = await this.requestAISignalAnalysis(signalData);
 
-      // Ask AI to analyze the signal immediately
-      await this.requestAISignalAnalysis(signal);
+      // If AI approves, process the signal
+      if (aiAnalysis.approved) {
+        const result =
+          await this.apiSignalProcessor.processApiSignal(signalData);
+
+        // Ask AI for post-processing analysis
+        await this.requestAIPostProcessingAnalysis(result, signalData);
+
+        return result;
+      } else {
+        // AI rejected the signal
+        this.logger.info(`❌ AI rejected signal: ${aiAnalysis.reason}`);
+        return {
+          signalId: "rejected",
+          tradingPair: {
+            userId: signalData.username,
+            tradeId: "rejected",
+            safeAddress: signalData.safeAddress,
+            networkKey: "arbitrum",
+            status: "failed",
+            error: `AI rejected signal: ${aiAnalysis.reason}`,
+          },
+          status: "failed",
+          error: `AI rejected signal: ${aiAnalysis.reason}`,
+        };
+      }
     } catch (error) {
-      this.logger.error("Error handling new signal:", error);
+      this.logger.error("Error processing signal with AI:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle signal processing completion
+   */
+  private async handleSignalProcessed(result: ProcessedSignal): Promise<void> {
+    try {
+      this.logger.info(`📊 Signal processed successfully: ${result.signalId}`);
+
+      // Ask AI to analyze the trade result
+      await this.requestAITradeAnalysis(result);
+
+      this.emit("signalProcessedWithAI", result);
+    } catch (error) {
+      this.logger.error("Error handling signal processed:", error);
+    }
+  }
+
+  /**
+   * Handle signal processing errors
+   */
+  private async handleSignalError(error: any): Promise<void> {
+    try {
+      this.logger.error(`❌ Signal processing error: ${error.error}`);
+
+      // Ask AI to analyze the error and suggest improvements
+      await this.requestAIErrorAnalysis(error);
+
+      this.emit("signalErrorWithAI", error);
+    } catch (analysisError) {
+      this.logger.error("Error analyzing signal error:", analysisError);
     }
   }
 
   /**
    * Request AI to analyze a trading signal and make decisions
    */
-  private async requestAISignalAnalysis(signal: any): Promise<void> {
+  private async requestAISignalAnalysis(signalData: ApiSignal): Promise<any> {
     try {
-      const signalData = signal.signal_data;
-      const subscribers = signal.subscribers || [];
-
-      // Construct AI prompt for signal analysis
       const analysisPrompt = `
 🔍 NEW TRADING SIGNAL ANALYSIS REQUEST
 
 Signal Details:
-• Token: ${signalData.tokenMentioned} (${signalData.tokenId})
-• Current Price: $${signalData.currentPrice}
-• Signal: ${signalData.signal}
-• Targets: TP1=$${signalData.targets[0]}, TP2=$${signalData.targets[1] || signalData.targets[0]}
-• Stop Loss: $${signalData.stopLoss}
-• Timeline: ${signalData.timeline}
-• Max Exit Time: ${signalData.maxExitTime}
-• Source: ${signalData.twitterHandle}
-• Subscribers: ${subscribers.length} users
+• Token: ${signalData["Token Mentioned"]}
+• Signal: ${signalData["Signal Message"]}
+• Current Price: $${signalData["Current Price"]}
+• TP1: $${signalData.TP1}
+• TP2: $${signalData.TP2}
+• SL: $${signalData.SL}
+• Max Exit Time: ${signalData["Max Exit Time"]["$date"]}
+• User: ${signalData.username}
+• Safe Address: ${signalData.safeAddress}
 
-As an AI trading agent, please analyze this signal and decide:
+Please analyze this signal and determine:
+1. Should this signal be approved for trading?
+2. What is the risk assessment?
+3. Are the TP/SL levels reasonable?
+4. Is the timing appropriate?
+5. Any concerns or recommendations?
 
-1. Should we execute trades for this signal? (Consider market conditions, risk, token legitimacy)
-2. What position size should we use for each user? (Risk-adjusted)
-3. Which network should we prioritize? (Consider gas costs, liquidity)
-4. Any modifications to the exit strategy? (TP/SL adjustments)
-
-Please use your trading analysis tools to make informed decisions.
-If you decide to proceed, use the executeSignalTrades tool.
-If you decide to reject, use the rejectSignal tool with reasoning.
+Provide your analysis and decision (approved: true/false, reason: string).
 `;
 
-      // Send to AI agent for analysis and decision
-      const result = await this.aiAgent.executeDecision(analysisPrompt);
+      const analysis = await this.aiAgent.executeDecision(analysisPrompt);
 
-      this.logger.info(
-        `🧠 AI Analysis Result for signal ${signal._id}: ${result.substring(0, 200)}...`
-      );
+      // Parse AI response (simplified - in real implementation, would use more sophisticated parsing)
+      const approved =
+        analysis.toLowerCase().includes("approved: true") ||
+        analysis.toLowerCase().includes("approve") ||
+        analysis.toLowerCase().includes("execute");
+
+      const reason = approved
+        ? "AI approved the signal"
+        : "AI analysis suggests caution";
+
+      return { approved, reason, analysis };
     } catch (error) {
-      this.logger.error("Error requesting AI signal analysis:", error);
+      this.logger.error("Error in AI signal analysis:", error);
+      return { approved: false, reason: "AI analysis failed", analysis: null };
     }
   }
 
   /**
-   * Handle price alerts by asking AI what to do
+   * Request AI post-processing analysis
+   */
+  private async requestAIPostProcessingAnalysis(
+    result: ProcessedSignal,
+    signalData: ApiSignal
+  ): Promise<void> {
+    try {
+      const postProcessingPrompt = `
+📈 POST-PROCESSING ANALYSIS
+
+Signal: ${signalData["Token Mentioned"]} ${signalData["Signal Message"]}
+Result: ${result.status}
+Trade ID: ${result.signalId}
+User: ${signalData.username}
+
+The signal has been processed. Please analyze:
+1. Was the execution successful?
+2. Are there any follow-up actions needed?
+3. Should we monitor this trade closely?
+4. Any risk management adjustments?
+
+Provide your post-processing analysis and recommendations.
+`;
+
+      const analysis = await this.aiAgent.executeDecision(postProcessingPrompt);
+
+      // Add to pending decisions for potential follow-up actions
+      this.pendingDecisions.set(result.signalId, {
+        type: "post-processing",
+        analysis,
+        result,
+        signalData,
+        timestamp: new Date(),
+      });
+
+      this.logger.info(
+        `📊 AI post-processing analysis completed for ${result.signalId}`
+      );
+    } catch (error) {
+      this.logger.error("Error in AI post-processing analysis:", error);
+    }
+  }
+
+  /**
+   * Request AI trade analysis
+   */
+  private async requestAITradeAnalysis(result: ProcessedSignal): Promise<void> {
+    try {
+      const tradeAnalysisPrompt = `
+💹 TRADE ANALYSIS REQUEST
+
+Trade ID: ${result.signalId}
+Status: ${result.status}
+User: ${result.tradingPair.userId}
+Network: ${result.tradingPair.networkKey}
+Safe Address: ${result.tradingPair.safeAddress}
+
+Please analyze this trade execution:
+1. Was the trade executed optimally?
+2. Are there any immediate concerns?
+3. Should we adjust monitoring parameters?
+4. Portfolio impact assessment?
+
+Provide your trade analysis and monitoring recommendations.
+`;
+
+      const analysis = await this.aiAgent.executeDecision(tradeAnalysisPrompt);
+
+      // Store analysis for future reference
+      this.pendingDecisions.set(`${result.signalId}_analysis`, {
+        type: "trade-analysis",
+        analysis,
+        result,
+        timestamp: new Date(),
+      });
+
+      this.logger.info(`📊 AI trade analysis completed for ${result.signalId}`);
+    } catch (error) {
+      this.logger.error("Error in AI trade analysis:", error);
+    }
+  }
+
+  /**
+   * Request AI error analysis
+   */
+  private async requestAIErrorAnalysis(error: any): Promise<void> {
+    try {
+      const errorAnalysisPrompt = `
+🚨 ERROR ANALYSIS REQUEST
+
+Error: ${error.error}
+Signal ID: ${error.signalId}
+User: ${error.tradingPair?.userId}
+Status: ${error.status}
+
+This trade execution failed. Please analyze:
+1. What caused the failure?
+2. How can we prevent similar errors?
+3. Should we adjust our parameters?
+4. Are there system improvements needed?
+
+Provide your error analysis and improvement recommendations.
+`;
+
+      const analysis = await this.aiAgent.executeDecision(errorAnalysisPrompt);
+
+      // Store analysis for system improvements
+      this.pendingDecisions.set(`${error.signalId}_error_analysis`, {
+        type: "error-analysis",
+        analysis,
+        error,
+        timestamp: new Date(),
+      });
+
+      this.logger.info(`📊 AI error analysis completed for ${error.signalId}`);
+    } catch (analysisError) {
+      this.logger.error("Error in AI error analysis:", analysisError);
+    }
+  }
+
+  /**
+   * Handle price alerts with AI decision-making
    */
   private async handlePriceAlert(exitData: any): Promise<void> {
     try {
-      const { tradeId, exitCondition, exitPrice, config } = exitData;
+      const alertPrompt = `
+🚨 PRICE ALERT ANALYSIS
 
-      this.logger.info(
-        `🔔 Price alert for trade ${tradeId}: ${exitCondition} at $${exitPrice}`
-      );
+Trade ID: ${exitData.tradeId}
+Current Price: ${exitData.currentPrice}
+Alert Type: ${exitData.alertType}
+Reason: ${exitData.reason}
 
-      const trade = this.tradeStateManager.getTrade(tradeId);
-      if (!trade) {
-        this.logger.error(`Trade ${tradeId} not found`);
-        return;
-      }
+A price alert has been triggered. Please analyze:
+1. Should we exit this trade?
+2. Exit percentage recommendation?
+3. Market conditions assessment?
+4. Risk management actions?
 
-      // Ask AI to decide what to do with this price alert
-      const decisionPrompt = `
-🚨 TRADE EXIT DECISION REQUIRED
-
-Trade Details:
-• Trade ID: ${tradeId}
-• User: ${trade.userId}
-• Token: ${trade.tokenSymbol}
-• Entry Price: $${trade.entryPrice}
-• Current Price: $${exitPrice}
-• Alert Condition: ${exitCondition}
-• Targets: TP1=$${trade.targets.tp1}, TP2=$${trade.targets.tp2}
-• Stop Loss: $${trade.stopLoss}
-
-Current Market Context:
-Please analyze current market conditions for ${trade.tokenSymbol} and decide:
-
-1. Should we exit this trade now based on the ${exitCondition} condition?
-2. Should we modify the exit strategy (partial exit, hold longer, adjust stops)?
-3. Consider market momentum, volatility, and overall conditions
-
-Use your market analysis tools and then use the executeTradeExit or modifyTradeStrategy tool based on your decision.
+Provide your price alert analysis and exit recommendations.
 `;
 
-      // Send to AI for decision
-      const result = await this.aiAgent.executeDecision(decisionPrompt);
+      const analysis = await this.aiAgent.executeDecision(alertPrompt);
+
+      // Add to pending decisions for potential trade exit
+      this.pendingDecisions.set(exitData.tradeId, {
+        type: "price-alert",
+        analysis,
+        exitData,
+        timestamp: new Date(),
+      });
 
       this.logger.info(
-        `🧠 AI Exit Decision for trade ${tradeId}: ${result.substring(0, 200)}...`
+        `🚨 AI price alert analysis completed for ${exitData.tradeId}`
       );
     } catch (error) {
       this.logger.error("Error handling price alert:", error);
@@ -282,29 +437,16 @@ Use your market analysis tools and then use the executeTradeExit or modifyTradeS
   }
 
   /**
-   * Process any pending AI decisions or analyses
+   * Process AI decision queue
    */
   private async processAIDecisionQueue(): Promise<void> {
     try {
-      // Check for any stale pending signals (older than 5 minutes)
-      const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
-
-      for (const [signalId, signal] of this.pendingSignals) {
-        const signalTime = new Date(
-          signal.generatedAt.$date || signal.generatedAt
-        ).getTime();
-
-        if (signalTime < fiveMinutesAgo) {
-          this.logger.warn(
-            `⏰ Signal ${signalId} has been pending for >5 minutes, requesting AI re-analysis`
-          );
-          await this.requestAISignalAnalysis(signal);
+      for (const [id, decision] of this.pendingDecisions.entries()) {
+        // Process decisions older than 30 seconds
+        if (Date.now() - decision.timestamp.getTime() > 30000) {
+          await this.processAIDecision(id, decision);
+          this.pendingDecisions.delete(id);
         }
-      }
-
-      // Ask AI to review overall portfolio and positions
-      if (this.tradeStateManager.getActiveTrades().length > 0) {
-        await this.requestAIPortfolioReview();
       }
     } catch (error) {
       this.logger.error("Error processing AI decision queue:", error);
@@ -312,188 +454,73 @@ Use your market analysis tools and then use the executeTradeExit or modifyTradeS
   }
 
   /**
-   * Request AI to review overall portfolio and make adjustments
+   * Process individual AI decision
    */
-  private async requestAIPortfolioReview(): Promise<void> {
+  private async processAIDecision(id: string, decision: any): Promise<void> {
     try {
-      const activeTrades = this.tradeStateManager.getActiveTrades();
-      const stats = this.tradeStateManager.getStats();
+      switch (decision.type) {
+        case "price-alert":
+          // Process price alert decision
+          if (decision.analysis.toLowerCase().includes("exit")) {
+            await this.tradeExecutionService.exitTrade(
+              decision.exitData.trade,
+              decision.exitData.amount,
+              "AI-recommended exit"
+            );
+          }
+          break;
 
-      const reviewPrompt = `
-📊 PORTFOLIO REVIEW REQUEST
+        case "post-processing":
+          // Process post-processing decision
+          this.logger.info(`Post-processing completed for ${id}`);
+          break;
 
-Current Portfolio Status:
-• Active Trades: ${stats.activeTrades}
-• Total Trades: ${stats.activeTrades + stats.historicalTrades}
-• Queued Executions: ${stats.queuedExecutions}
+        case "trade-analysis":
+          // Process trade analysis
+          this.logger.info(`Trade analysis completed for ${id}`);
+          break;
 
-Active Positions:
-${activeTrades
-  .slice(0, 5)
-  .map(
-    (trade) =>
-      `• ${trade.tokenSymbol}: ${trade.status} (Entry: $${trade.entryPrice})`
-  )
-  .join("\n")}
-
-Please review the portfolio and consider:
-1. Risk distribution across positions
-2. Correlation between holdings
-3. Any rebalancing needed
-4. Market conditions impact on portfolio
-
-Use your portfolio analysis tools if adjustments are needed.
-`;
-
-      const result = await this.aiAgent.executeDecision(reviewPrompt);
-      this.logger.debug(
-        `🧠 AI Portfolio Review: ${result.substring(0, 100)}...`
-      );
-    } catch (error) {
-      this.logger.error("Error requesting AI portfolio review:", error);
-    }
-  }
-
-  // Public methods for AI agent tools to use
-
-  async executeSignalForSubscribers(
-    signalId: string,
-    approvedUsers: string[],
-    positionSize: number
-  ): Promise<any> {
-    const signal = this.pendingSignals.get(signalId);
-    if (!signal) {
-      throw new Error(`Signal ${signalId} not found in pending queue`);
-    }
-
-    const results = [];
-
-    for (const username of approvedUsers) {
-      try {
-        const userSafe = await this.dbService.getUserSafe(username);
-        if (!userSafe) {
-          this.logger.warn(`No Safe found for user ${username}`);
-          continue;
-        }
-
-        const activeDeployments =
-          await this.dbService.getActiveDeployments(userSafe);
-        if (activeDeployments.length === 0) {
-          this.logger.warn(`No active deployments for user ${username}`);
-          continue;
-        }
-
-        const optimalNetwork = NetworkUtils.determineOptimalNetwork(
-          signal.signal_data.tokenMentioned,
-          activeDeployments
-        );
-
-        if (!optimalNetwork) {
-          this.logger.warn(
-            `No optimal network for ${signal.signal_data.tokenMentioned}`
-          );
-          continue;
-        }
-
-        const deployment = activeDeployments.find(
-          (d) => d.networkKey === optimalNetwork
-        );
-        if (!deployment) continue;
-
-        // Create trade entry
-        const trade = this.tradeStateManager.createTradeEntry(
-          username,
-          signalId,
-          deployment.address,
-          optimalNetwork,
-          signal.signal_data.tokenMentioned,
-          signal.signal_data
-        );
-
-        // Queue for execution with AI-determined position size
-        this.tradeStateManager.queueTradeExecution({
-          action: "enter",
-          tradeId: trade.tradeId,
-          amount: positionSize.toString(),
-          reason: `AI-approved signal for ${signal.signal_data.tokenMentioned}`,
-          urgency: "high",
-        });
-
-        results.push({
-          username,
-          tradeId: trade.tradeId,
-          status: "queued",
-          network: optimalNetwork,
-        });
-
-        this.logger.info(
-          `✅ AI-approved trade queued: ${username} - ${trade.tradeId}`
-        );
-      } catch (error) {
-        this.logger.error(`Failed to process user ${username}:`, error);
-        results.push({
-          username,
-          status: "failed",
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
+        case "error-analysis":
+          // Process error analysis
+          this.logger.info(`Error analysis completed for ${id}`);
+          break;
       }
+    } catch (error) {
+      this.logger.error(`Error processing AI decision ${id}:`, error);
     }
+  }
 
-    // Remove from pending signals
-    this.pendingSignals.delete(signalId);
-
+  /**
+   * Get orchestrator status
+   */
+  getStatus(): any {
     return {
-      signalId,
-      processedUsers: results.length,
-      successfulTrades: results.filter((r) => r.status === "queued").length,
-      results,
+      isActive: this.isActive,
+      apiSignalProcessor: this.apiSignalProcessor.getStatus(),
+      pendingDecisions: this.pendingDecisions.size,
+      aiAgent: {
+        initialized: !!this.aiAgent,
+        ready: this.isActive,
+      },
+      lastActivity: new Date(),
     };
   }
 
-  async rejectSignal(signalId: string, reason: string): Promise<void> {
-    this.pendingSignals.delete(signalId);
-    this.logger.info(`❌ AI rejected signal ${signalId}: ${reason}`);
-
-    this.emit("signalRejected", { signalId, reason });
+  /**
+   * Get pending decisions
+   */
+  getPendingDecisions(): Map<string, any> {
+    return new Map(this.pendingDecisions);
   }
 
-  async executeTradeExit(
-    tradeId: string,
-    exitPercentage: number = 100,
-    reason: string
-  ): Promise<void> {
-    const trade = this.tradeStateManager.getTrade(tradeId);
-    if (!trade) {
-      throw new Error(`Trade ${tradeId} not found`);
-    }
-
-    const exitAmount = (
-      (parseFloat(trade.entryAmount) * exitPercentage) /
-      100
-    ).toString();
-
-    this.tradeStateManager.queueTradeExecution({
-      action: "exit",
-      tradeId,
-      amount: exitAmount,
-      reason: `AI decision: ${reason}`,
-      urgency: "high",
-    });
-
-    this.logger.info(
-      `🤖 AI queued exit for trade ${tradeId}: ${exitPercentage}% - ${reason}`
-    );
-  }
-
-  getSystemStatus(): any {
-    return {
-      isWatching: this.isWatching,
-      pendingSignals: this.pendingSignals.size,
-      activeTrades: this.tradeStateManager.getActiveTrades().length,
-      monitoredTrades: this.priceMonitoringService.getMonitoredTrades().size,
-      mode: "agentic",
-    };
+  /**
+   * Clear pending decisions
+   */
+  clearPendingDecisions(): void {
+    this.pendingDecisions.clear();
+    this.logger.info("Pending decisions cleared");
   }
 }
 
 export default AgenticTradingOrchestrator;
+export { AgenticConfig };

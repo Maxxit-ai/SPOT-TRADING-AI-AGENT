@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import winston from "winston";
+import { logger } from "../config/logger";
 import { v4 as uuidv4 } from "uuid";
 
 interface TradeEntry {
@@ -64,7 +64,7 @@ interface TradeExecutionPlan {
 }
 
 class TradeStateManager extends EventEmitter {
-  private logger: winston.Logger;
+  private logger = logger;
   private activeTrades: Map<string, TradeEntry> = new Map();
   private tradeHistory: Map<string, TradeEntry> = new Map();
   private userTrades: Map<string, Set<string>> = new Map(); // userId -> Set<tradeId>
@@ -72,17 +72,6 @@ class TradeStateManager extends EventEmitter {
 
   constructor() {
     super();
-    this.logger = winston.createLogger({
-      level: "info",
-      format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.json()
-      ),
-      transports: [
-        new winston.transports.Console(),
-        new winston.transports.File({ filename: "trade-state.log" }),
-      ],
-    });
   }
 
   createTradeEntry(
@@ -257,6 +246,18 @@ class TradeStateManager extends EventEmitter {
     }
 
     return Array.from(this.activeTrades.values());
+  }
+
+  getPendingTrades(userId?: string): TradeEntry[] {
+    const trades = Array.from(this.activeTrades.values()).filter(
+      (trade) => trade.status === "pending"
+    );
+
+    if (userId) {
+      return trades.filter((trade) => trade.userId === userId);
+    }
+
+    return trades;
   }
 
   getTrade(tradeId: string): TradeEntry | null {

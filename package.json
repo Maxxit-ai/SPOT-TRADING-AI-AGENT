@@ -1,7 +1,7 @@
 {
-  "name": "ai-agent-automation-service",
+  "name": "ai-agent-api-signal-trader",
   "version": "1.0.0",
-  "description": "Autonomous AI Agent Service for Smart Contract Trading Automation",
+  "description": "AI Trading Agent with API-based Signal Processing for Safe Automation",
   "main": "dist/server.js",
   "scripts": {
     "start": "node dist/server.js",
@@ -20,7 +20,9 @@
     "safe",
     "blockchain",
     "trading",
-    "langchain"
+    "langchain",
+    "api",
+    "signal-processing"
   ],
   "author": "",
   "license": "MIT",
@@ -45,7 +47,6 @@
     "lodash": "^4.17.21",
     "moment": "^2.29.4",
     "mongodb": "^6.17.0",
-    "mongoose": "^8.0.3",
     "morgan": "^1.10.0",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.7",

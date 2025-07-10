@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import winston from "winston";
+import { logger } from "../config/logger";
 import { ChangeStreamDocument } from "mongodb";
 import DatabaseService from "./DatabaseService";
 import TradeStateManager from "./TradeStateManager";
@@ -35,7 +35,7 @@ interface TradingConfig {
 }
 
 class TradingSignalWatcher extends EventEmitter {
-  private logger: winston.Logger;
+  private logger = logger;
   private dbService: DatabaseService;
   private tradeStateManager: TradeStateManager;
   private tradeExecutionService: TradeExecutionService;
@@ -59,18 +59,6 @@ class TradingSignalWatcher extends EventEmitter {
     this.tradeExecutionService = tradeExecutionService;
     this.priceMonitoringService = priceMonitoringService;
     this.config = config;
-
-    this.logger = winston.createLogger({
-      level: "info",
-      format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.json()
-      ),
-      transports: [
-        new winston.transports.Console(),
-        new winston.transports.File({ filename: "trading-signal-watcher.log" }),
-      ],
-    });
 
     this.setupEventHandlers();
   }
@@ -148,7 +136,7 @@ class TradingSignalWatcher extends EventEmitter {
       }
 
       const signal = change.fullDocument;
-      const signalId = signal._id.toString();
+      const signalId = signal["_id"].toString();
 
       // Prevent duplicate processing
       if (this.processingQueue.has(signalId)) {
@@ -158,7 +146,7 @@ class TradingSignalWatcher extends EventEmitter {
 
       this.processingQueue.add(signalId);
       this.logger.info(
-        `📡 New trading signal received: ${signalId} for ${signal.signal_data?.tokenMentioned}`
+        `📡 New trading signal received: ${signalId} for ${signal["signal_data"]?.tokenMentioned}`
       );
 
       try {
@@ -377,10 +365,15 @@ class TradingSignalWatcher extends EventEmitter {
       const fromAmount = positionSizeUsd;
 
       // Check if user has sufficient balance
-      const balance = await this.tradeExecutionService.getSafeBalance(
-        trade.safeAddress,
+      const networkConfig = NetworkUtils.getNetworkByKey(trade.networkKey);
+      const fromTokenAddress = NetworkUtils.getTokenAddress(
         fromToken,
         trade.networkKey
+      );
+      const balance = await this.tradeExecutionService.getSafeBalance(
+        trade.safeAddress,
+        fromTokenAddress || fromToken,
+        networkConfig?.chainId || 42161
       );
 
       if (!balance || parseFloat(balance) < parseFloat(fromAmount)) {
@@ -390,14 +383,14 @@ class TradingSignalWatcher extends EventEmitter {
       }
 
       // Execute the swap
-      const result = await this.tradeExecutionService.executeSwap({
-        safeAddress: trade.safeAddress,
-        networkKey: trade.networkKey,
+      const result: any = await this.tradeExecutionService.executeSwap(
+        trade.safeAddress,
         fromToken,
         toToken,
-        amount: fromAmount,
-        slippage: this.config.defaultSlippage,
-      });
+        fromAmount,
+        networkConfig?.chainId || 42161,
+        networkConfig!
+      );
 
       if (result.success) {
         // Update trade state
@@ -455,14 +448,15 @@ class TradingSignalWatcher extends EventEmitter {
       const fromToken = trade.tokenSymbol;
       const toToken = "USDC";
 
-      const result = await this.tradeExecutionService.executeSwap({
-        safeAddress: trade.safeAddress,
-        networkKey: trade.networkKey,
+      const exitNetworkConfig = NetworkUtils.getNetworkByKey(trade.networkKey);
+      const result: any = await this.tradeExecutionService.executeSwap(
+        trade.safeAddress,
         fromToken,
         toToken,
         amount,
-        slippage: this.config.defaultSlippage,
-      });
+        exitNetworkConfig?.chainId || 42161,
+        exitNetworkConfig!
+      );
 
       if (result.success) {
         // Calculate P&L

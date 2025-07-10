@@ -1,6 +1,6 @@
 import axios from "axios";
 import { EventEmitter } from "events";
-import winston from "winston";
+import { logger } from "../config/logger";
 import { NetworkUtils } from "../utils/NetworkUtils";
 
 interface PriceData {
@@ -30,7 +30,7 @@ interface TradeMonitoringConfig {
 }
 
 class PriceMonitoringService extends EventEmitter {
-  private logger: winston.Logger;
+  private logger = logger;
   private priceCache: Map<string, PriceData> = new Map();
   private priceAlerts: PriceAlert[] = [];
   private tradeMonitoringConfigs: Map<string, TradeMonitoringConfig> =
@@ -42,17 +42,6 @@ class PriceMonitoringService extends EventEmitter {
 
   constructor() {
     super();
-    this.logger = winston.createLogger({
-      level: "info",
-      format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.json()
-      ),
-      transports: [
-        new winston.transports.Console(),
-        new winston.transports.File({ filename: "price-monitoring.log" }),
-      ],
-    });
   }
 
   async start(): Promise<void> {

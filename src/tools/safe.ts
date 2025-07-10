@@ -83,7 +83,7 @@ export const deploySafeForTrading = async ({
   chainId?: string;
 }): Promise<string> => {
   try {
-    const agentAddress = process.env.AGENT_ADDRESS;
+    const agentAddress = process.env["AGENT_ADDRESS"];
     if (!agentAddress) {
       throw new Error("Agent address not configured");
     }
@@ -123,7 +123,7 @@ export const deploySafeForTrading = async ({
 
     const protocolKit = await Safe.init({
       provider: rpcUrl,
-      signer: process.env.AGENT_PRIVATE_KEY,
+      signer: process.env["AGENT_PRIVATE_KEY"],
       predictedSafe: {
         safeAccountConfig,
         safeDeploymentConfig: {
@@ -246,7 +246,7 @@ export const getSafeInfo = async ({
 
     const protocolKit = await Safe.init({
       provider: rpcUrl,
-      signer: process.env.AGENT_PRIVATE_KEY,
+      signer: process.env["AGENT_PRIVATE_KEY"],
       safeAddress: safeAddress,
     });
 

@@ -176,7 +176,7 @@ class AITradingAgent {
     // Initialize the AI model
     const agentModel = new ChatOpenAI({
       model: "o3-mini",
-      openAIApiKey: process.env.OPENAI_API_KEY,
+      openAIApiKey: process.env["OPENAI_API_KEY"],
     });
 
     // Create the React agent with tools
@@ -196,16 +196,16 @@ class AITradingAgent {
   private initializeAgenticTrading(): void {
     const agenticConfig = {
       database: {
-        signalFlowUri: process.env.MONGODB_URI!,
+        signalFlowUri: process.env["MONGODB_URI"]!,
         signalFlowDb: "ctxbt-signal-flow",
         signalFlowCollection: "trading-signals",
-        safeDeploymentUri: process.env.MONGODB_URI!,
+        safeDeploymentUri: process.env["MONGODB_URI"]!,
         safeDeploymentDb: "safe-deployment-service",
         safeCollection: "safes",
       },
       aiAgent: this, // Reference to this AI agent for decision-making
       enabled: false, // Disabled by default
-      debug: process.env.NODE_ENV === "development",
+      debug: process.env["NODE_ENV"] === "development",
     };
 
     this.agenticOrchestrator = new AgenticTradingOrchestrator(agenticConfig);
@@ -302,7 +302,7 @@ Use the individual trading tools or restart agentic trading to resume AI-powered
         return "❌ Agentic trading orchestrator not initialized";
       }
 
-      const status = this.agenticOrchestrator.getSystemStatus();
+      const status = this.agenticOrchestrator.getStatus();
 
       let report = `🧠 Agentic Trading System Status\n\n`;
 
