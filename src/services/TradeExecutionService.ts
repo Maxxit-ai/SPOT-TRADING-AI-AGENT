@@ -123,17 +123,19 @@ class TradeExecutionService {
    */
   private async getSwapQuote(
     params: SwapParams,
-    chainId: number
+    chainId: number,
+    dynamicTokenInfo?: any
   ): Promise<SwapQuote> {
     try {
-      // Get token contract addresses
+      // Get token contract addresses - use dynamic info for buy token if provided
       const sellTokenAddress = await this.getTokenAddress(
         params.sellToken,
         chainId
       );
       const buyTokenAddress = await this.getTokenAddress(
         params.buyToken,
-        chainId
+        chainId,
+        dynamicTokenInfo // This should contain the PEPE token info
       );
 
       if (!sellTokenAddress || !buyTokenAddress) {
@@ -235,7 +237,8 @@ class TradeExecutionService {
     buyToken: string,
     sellAmount: string,
     chainId: number,
-    networkConfig: NetworkConfig
+    networkConfig: NetworkConfig,
+    dynamicTokenInfo?: any
   ): Promise<{
     success: boolean;
     transactionHash?: string;
@@ -257,7 +260,7 @@ class TradeExecutionService {
         networkConfig
       );
 
-      // Get token addresses and amounts in wei
+      // Get token addresses and amounts in wei - pass dynamic info for buy token (unknown token)
       const sellTokenAddress = await this.getTokenAddress(sellToken, chainId);
       if (!sellTokenAddress) {
         throw new Error(`Sell token address not found for ${sellToken}`);
@@ -305,7 +308,8 @@ class TradeExecutionService {
           buyToken,
           sellAmount,
         },
-        chainId
+        chainId,
+        dynamicTokenInfo // Pass dynamic token info for unknown tokens
       );
 
       // Step 3.5: Ensure AllowanceHolder allowance (only for ERC20 tokens)
@@ -397,7 +401,8 @@ class TradeExecutionService {
         throw new Error("Transaction execution failed");
       }
     } catch (error) {
-      logger.error(`❌ Swap execution failed: ${error}`);
+      // logger.error(`❌ Swap execution failed: ${error}`);
+      console.log(`❌ Swap execution failed: ${error}`);
       return {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
@@ -528,7 +533,8 @@ class TradeExecutionService {
    */
   async executeTrade(
     tradeData: any,
-    positionSizeAmount: string
+    positionSizeAmount: string,
+    dynamicTokenInfo?: any
   ): Promise<void> {
     try {
       logger.info(
@@ -563,7 +569,8 @@ class TradeExecutionService {
         toToken,
         positionSizeAmount, // Now passing the actual token amount, not USD
         chainId,
-        networkConfig
+        networkConfig,
+        dynamicTokenInfo // Pass dynamic token info for unknown tokens
       );
 
       if (!result.success) {
@@ -572,7 +579,8 @@ class TradeExecutionService {
 
       logger.info(`✅ Trade executed successfully: ${result.transactionHash}`);
     } catch (error) {
-      logger.error(`❌ Trade execution failed: ${error}`);
+      // logger.error(`❌ Trade execution failed: ${error}`);
+      console.log(`❌ Trade execution failed: ${error}`);
       throw error;
     }
   }
@@ -758,10 +766,12 @@ class TradeExecutionService {
 
   /**
    * Get token contract address from symbol and chain
+   * Enhanced to use dynamic token detection when static mapping fails
    */
   private async getTokenAddress(
     tokenSymbol: string,
-    chainId: number
+    chainId: number,
+    dynamicTokenInfo?: any
   ): Promise<string | null> {
     try {
       const networkKey = this.getNetworkKeyFromChainId(chainId);
@@ -775,19 +785,55 @@ class TradeExecutionService {
         return NATIVE_ETH_ADDRESS; // 0x address for native tokens in 0x API
       }
 
-      // Get token address from NetworkUtils
-      const tokenAddress = NetworkUtils.getTokenAddress(
+      // First try: Get token address from static NetworkUtils (for known tokens)
+      const staticTokenAddress = NetworkUtils.getTokenAddress(
         tokenSymbol,
         networkKey
       );
-      if (!tokenAddress) {
-        logger.error(
-          `Token address not found for ${tokenSymbol} on ${networkKey}`
+      if (staticTokenAddress) {
+        logger.info(
+          `✅ Found ${tokenSymbol} in static TOKEN_MAP: ${staticTokenAddress}`
         );
-        return null;
+        return staticTokenAddress;
       }
 
-      return tokenAddress;
+      // Second try: Use dynamic token info if provided
+      if (dynamicTokenInfo && dynamicTokenInfo.contractAddress) {
+        logger.info(
+          `✅ Using dynamic token address for ${tokenSymbol}: ${dynamicTokenInfo.contractAddress}`
+        );
+        return dynamicTokenInfo.contractAddress;
+      }
+
+      // Third try: Use TokenChainDetectionService for unknown tokens
+      logger.info(
+        `🔍 Token ${tokenSymbol} not in static map, using dynamic detection...`
+      );
+      const { TokenChainDetectionService } = await import(
+        "./TokenChainDetectionService"
+      );
+      const tokenChainService = new TokenChainDetectionService();
+
+      const detectionResult =
+        await tokenChainService.detectTokenChains(tokenSymbol);
+      if (detectionResult.success && detectionResult.tokenInfo) {
+        // Find token info for the specific chain
+        const tokenInfoForChain = detectionResult.tokenInfo.find(
+          (info) => info.chainId === chainId || info.networkKey === networkKey
+        );
+
+        if (tokenInfoForChain) {
+          logger.info(
+            `✅ Dynamic detection found ${tokenSymbol} on ${networkKey}: ${tokenInfoForChain.contractAddress}`
+          );
+          return tokenInfoForChain.contractAddress;
+        }
+      }
+
+      logger.error(
+        `❌ Token address not found for ${tokenSymbol} on ${networkKey} (tried static map and dynamic detection)`
+      );
+      return null;
     } catch (error) {
       logger.error(`Error getting token address for ${tokenSymbol}:`, error);
       return null;

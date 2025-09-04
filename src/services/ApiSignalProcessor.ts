@@ -382,7 +382,8 @@ class ApiSignalProcessor extends EventEmitter {
       await this.executeTradeEnhanced(
         tradingPair,
         signalData,
-        positionCalculation
+        positionCalculation,
+        tokenDetection // Pass token detection results
       );
 
       return {
@@ -582,7 +583,8 @@ class ApiSignalProcessor extends EventEmitter {
   private async executeTradeEnhanced(
     tradingPair: ProcessedTradingPair,
     signalData: ApiSignal,
-    positionCalculation: any
+    positionCalculation: any,
+    tokenDetection?: any
   ): Promise<void> {
     try {
       // Convert signal data to the format expected by the trade execution service
@@ -610,10 +612,17 @@ class ApiSignalProcessor extends EventEmitter {
         }
       );
 
-      // Execute the trade with the calculated token amount
+      // Find the token info for the target network
+      const targetTokenInfo =
+        tokenDetection?.tokenInfo?.find(
+          (info: any) => info.networkKey === tradingPair.networkKey
+        ) || tokenDetection?.primaryChain;
+
+      // Execute the trade with the calculated token amount and dynamic token info
       await this.tradeExecutionService.executeTrade(
         tradeData,
-        positionCalculation.positionSizeFormatted // Pass token amount, not USD
+        positionCalculation.positionSizeFormatted, // Pass token amount, not USD
+        targetTokenInfo // Pass dynamic token info for unknown tokens
       );
 
       // Update status

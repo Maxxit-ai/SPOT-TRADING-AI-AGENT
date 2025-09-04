@@ -4,9 +4,9 @@ export {
   TokenInfo,
   SUPPORTED_NETWORKS,
   TOKEN_MAP,
-  NetworkUtils,
 } from "../utils/NetworkUtils";
-
+import { NetworkUtils } from "../utils/NetworkUtils";
+import { NetworkConfig } from "../utils/NetworkUtils";
 // Additional network configuration for the trading system
 export const TRADING_NETWORK_CONFIGS = {
   // Gas price settings for different networks

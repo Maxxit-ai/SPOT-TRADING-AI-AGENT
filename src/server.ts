@@ -394,7 +394,10 @@ class AITradingServer {
     this.app.post("/api/signal/process", async (req, res) => {
       try {
         const signalData: ApiSignal = req.body;
-
+        console.log(
+          "🚀 ~ AITradingServer ~ initializeRoutes ~ signalData:",
+          signalData
+        );
         // Validate required fields
         if (!signalData) {
           return res.status(400).json({
@@ -416,6 +419,14 @@ class AITradingServer {
         // Process the signal
         const result =
           await this.apiSignalProcessor.processApiSignal(signalData);
+        // const result = {
+        //   signalId: "123",
+        //   status: "success",
+        //   result: {
+        //     signalId: "123",
+        //     status: "success",
+        //   },
+        // };
 
         // Emit to connected clients
         this.io.emit("signal-processed", {
