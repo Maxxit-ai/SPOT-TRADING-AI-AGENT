@@ -335,7 +335,7 @@ The system provides real-time monitoring through:
 ### Signal Processing Test
 
 ```bash
-curl -X POST http://localhost:3001/api/signal/process \
+curl -X POST http://localhost:3006/api/signal/process \
   -H "Content-Type: application/json" \
   -d '{
     "Signal Message": "buy",
@@ -353,7 +353,7 @@ curl -X POST http://localhost:3001/api/signal/process \
 ### Status Check
 
 ```bash
-curl http://localhost:3001/api/signal/status
+curl http://localhost:3006/api/signal/status
 ```
 
 ## 🚀 Production Deployment
@@ -366,7 +366,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production
 COPY dist ./dist
-EXPOSE 3001
+EXPOSE 3006
 CMD ["npm", "start"]
 ```
 
@@ -427,7 +427,7 @@ The system emits real-time events via WebSocket:
 
 ```javascript
 // Connect to WebSocket
-const socket = io("http://localhost:3001");
+const socket = io("http://localhost:3006");
 
 // Listen for signal processing events
 socket.on("signal-processed", (data) => {
@@ -450,7 +450,7 @@ const axios = require("axios");
 async function processSignal(signalData) {
   try {
     const response = await axios.post(
-      "http://localhost:3001/api/signal/process",
+      "http://localhost:3006/api/signal/process",
       signalData
     );
     return response.data;
@@ -470,7 +470,7 @@ import json
 def process_signal(signal_data):
     try:
         response = requests.post(
-            'http://localhost:3001/api/signal/process',
+            'http://localhost:3006/api/signal/process',
             json=signal_data
         )
         return response.json()

@@ -94,7 +94,7 @@ Edit `.env` file with your settings:
 
 ```env
 # Server Configuration
-PORT=3001
+PORT=3006
 NODE_ENV=development
 CORS_ORIGIN=http://localhost:3000
 
@@ -302,7 +302,7 @@ npm run dev
 ### 2. Verify System Status
 
 ```bash
-curl http://localhost:3001/health
+curl http://localhost:3006/health
 ```
 
 Expected response:
@@ -326,7 +326,7 @@ Expected response:
 ### 3. Start Agentic Trading
 
 ```bash
-curl -X POST http://localhost:3001/api/agentic/start \
+curl -X POST http://localhost:3006/api/agentic/start \
   -H "Content-Type: application/json" \
   -d '{"enabled": true, "debug": true}'
 ```
@@ -370,25 +370,25 @@ npm run test:integration
 #### Check Agentic Status
 
 ```bash
-curl http://localhost:3001/api/agentic/status
+curl http://localhost:3006/api/agentic/status
 ```
 
 #### Get Pending Signals
 
 ```bash
-curl http://localhost:3001/api/agentic/pending-signals
+curl http://localhost:3006/api/agentic/pending-signals
 ```
 
 #### Get Trading Context
 
 ```bash
-curl http://localhost:3001/api/agentic/trading-context/ETH
+curl http://localhost:3006/api/agentic/trading-context/ETH
 ```
 
 #### Manual Trade Exit
 
 ```bash
-curl -X POST http://localhost:3001/api/agentic/trade/TRADE_ID/exit \
+curl -X POST http://localhost:3006/api/agentic/trade/TRADE_ID/exit \
   -H "Content-Type: application/json" \
   -d '{"exitPercentage": 50, "reason": "Manual test exit"}'
 ```

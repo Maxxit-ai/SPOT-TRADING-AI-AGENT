@@ -415,10 +415,10 @@ pm2 save
 
 ```bash
 # Health check endpoint
-curl http://localhost:3001/health
+curl http://localhost:3006/health
 
 # Autonomous status
-curl http://localhost:3001/api/autonomous/status
+curl http://localhost:3006/api/autonomous/status
 ```
 
 ## 🤝 Contributing

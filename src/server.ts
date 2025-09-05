@@ -62,7 +62,7 @@ class AITradingServer {
     });
 
     this.config = {
-      port: parseInt(process.env["PORT"] || "3001"),
+      port: parseInt(process.env["PORT"] || "3006"),
       nodeEnv: process.env["NODE_ENV"] || "development",
       corsOrigin: process.env["CORS_ORIGIN"] || "http://localhost:3000",
       rateLimit: parseInt(process.env["API_RATE_LIMIT"] || "100"),
