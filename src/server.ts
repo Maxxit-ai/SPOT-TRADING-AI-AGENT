@@ -18,6 +18,7 @@ import DatabaseService from "./services/DatabaseService";
 import TradeStateManager from "./services/TradeStateManager";
 import TradeExecutionService from "./services/TradeExecutionService";
 import PriceMonitoringService from "./services/PriceMonitoringService";
+import TradeMonitoringService from "./services/TradeMonitoringService";
 import { ApiSignal } from "./services/ApiSignalProcessor";
 
 // Load environment variables
@@ -47,6 +48,8 @@ class AITradingServer {
   private tradingAgent!: AITradingAgent;
   private apiSignalProcessor!: ApiSignalProcessor;
   private dbService!: DatabaseService;
+  private tradeMonitoringService!: TradeMonitoringService;
+  private tradingOrchestrator: any; // Will hold AgenticTradingOrchestrator instance
   private config: ServerConfig;
   private dbConfig: DatabaseConfig;
   private isShuttingDown: boolean = false;
@@ -477,6 +480,158 @@ class AITradingServer {
       });
     });
 
+    // NEW: Trade Monitoring API Endpoints
+    this.app.get("/api/trades/monitoring/status", async (req, res) => {
+      try {
+        if (!this.tradeMonitoringService) {
+          return res.status(503).json({
+            error: "Trade monitoring service not available",
+          });
+        }
+
+        const status = this.tradeMonitoringService.getSystemStatus();
+
+        res.json({
+          success: true,
+          monitoringStatus: status,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error("Trade monitoring status error:", error);
+        res.status(500).json({
+          error: "Failed to get trade monitoring status",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    this.app.get("/api/trades/active", async (req, res) => {
+      try {
+        if (!this.tradeMonitoringService) {
+          return res.status(503).json({
+            error: "Trade monitoring service not available",
+          });
+        }
+
+        const activeTrades = this.tradeMonitoringService.getMonitoredTrades();
+
+        res.json({
+          success: true,
+          activeTrades,
+          count: activeTrades.length,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error("Active trades error:", error);
+        res.status(500).json({
+          error: "Failed to get active trades",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    this.app.get("/api/trades/history", async (req, res) => {
+      try {
+        const { userId, limit = 50 } = req.query;
+
+        if (!this.dbService) {
+          return res.status(503).json({
+            error: "Database service not available",
+          });
+        }
+
+        const trades = await this.dbService.getTradeHistory(
+          userId as string,
+          parseInt(limit as string)
+        );
+
+        res.json({
+          success: true,
+          trades,
+          count: trades.length,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error("Trade history error:", error);
+        res.status(500).json({
+          error: "Failed to get trade history",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    this.app.post("/api/trades/:tradeId/exit", async (req, res) => {
+      try {
+        const { tradeId } = req.params;
+        const { reason = "Manual API exit" } = req.body;
+
+        if (!this.tradeMonitoringService) {
+          return res.status(503).json({
+            error: "Trade monitoring service not available",
+          });
+        }
+
+        const success = await this.tradeMonitoringService.manualExitTrade(
+          tradeId,
+          reason
+        );
+
+        if (success) {
+          res.json({
+            success: true,
+            message: `Trade ${tradeId} exit initiated`,
+            tradeId,
+            reason,
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          res.status(404).json({
+            error: `Trade ${tradeId} not found or already exited`,
+            tradeId,
+          });
+        }
+      } catch (error) {
+        console.error("Manual trade exit error:", error);
+        res.status(500).json({
+          error: "Failed to exit trade",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    this.app.get("/api/trades/:tradeId/status", async (req, res) => {
+      try {
+        const { tradeId } = req.params;
+
+        if (!this.tradeMonitoringService) {
+          return res.status(503).json({
+            error: "Trade monitoring service not available",
+          });
+        }
+
+        const tradeStatus = this.tradeMonitoringService.getTradeStatus(tradeId);
+
+        if (tradeStatus) {
+          res.json({
+            success: true,
+            trade: tradeStatus,
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          res.status(404).json({
+            error: `Trade ${tradeId} not found`,
+            tradeId,
+          });
+        }
+      } catch (error) {
+        console.error("Trade status error:", error);
+        res.status(500).json({
+          error: "Failed to get trade status",
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
     // Global error handler
     this.app.use(
       (
@@ -594,12 +749,20 @@ class AITradingServer {
       const tradeExecutionService = new TradeExecutionService();
       const priceMonitoringService = new PriceMonitoringService();
 
+      // Initialize trade monitoring service
+      this.tradeMonitoringService = new TradeMonitoringService(
+        this.dbService,
+        tradeExecutionService,
+        priceMonitoringService
+      );
+
       // Initialize API signal processor
       this.apiSignalProcessor = new ApiSignalProcessor(
         this.dbService,
         tradeStateManager,
         tradeExecutionService,
         priceMonitoringService,
+        this.tradeMonitoringService,
         {
           positionSizeUsd: parseInt(
             process.env["DEFAULT_POSITION_SIZE_USD"] || "100"
@@ -643,12 +806,20 @@ class AITradingServer {
         }
       }
 
-      // Stop API signal processor
+      // Stop API signal processor and trade monitoring
       if (this.apiSignalProcessor) {
         try {
           await this.apiSignalProcessor.stop();
         } catch (error) {
           console.error("⚠️ Error stopping API signal processor:", error);
+        }
+      }
+
+      if (this.tradeMonitoringService) {
+        try {
+          await this.tradeMonitoringService.stop();
+        } catch (error) {
+          console.error("⚠️ Error stopping trade monitoring service:", error);
         }
       }
 
@@ -708,13 +879,16 @@ class AITradingServer {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       `);
 
-      // Start API signal processor
+      // Start API signal processor and trade monitoring
       try {
         await this.dbService.connect();
         await this.apiSignalProcessor.start();
-        console.log("✅ API Signal Processor started successfully");
+        await this.tradeMonitoringService.start();
+        console.log(
+          "✅ API Signal Processor and Trade Monitoring started successfully"
+        );
       } catch (error) {
-        console.error("❌ Failed to start API Signal Processor:", error);
+        console.error("❌ Failed to start services:", error);
       }
     });
   }

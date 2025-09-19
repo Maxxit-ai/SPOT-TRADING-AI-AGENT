@@ -8,6 +8,7 @@ interface DatabaseConfig {
   safeDeploymentUri: string;
   safeDeploymentDb: string;
   safeCollection: string;
+  tradesCollection?: string;
 }
 
 class DatabaseService {
@@ -282,6 +283,113 @@ class DatabaseService {
     );
 
     return activeDeployments;
+  }
+
+  // Trade Storage Methods
+  async storeExecutedTrade(tradeData: any): Promise<string> {
+    try {
+      const tradesCollection = this.getSignalFlowDb().collection(
+        this.config.tradesCollection || "executed-trades"
+      );
+
+      const trade = {
+        ...tradeData,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        status: "active", // active, exited, failed
+      };
+
+      const result = await tradesCollection.insertOne(trade);
+
+      this.logger.info(
+        `📝 Stored executed trade in MongoDB: ${result.insertedId}`
+      );
+      return result.insertedId.toString();
+    } catch (error) {
+      this.logger.error("Error storing executed trade:", error);
+      throw error;
+    }
+  }
+
+  async getActiveTrades(): Promise<any[]> {
+    try {
+      const tradesCollection = this.getSignalFlowDb().collection(
+        this.config.tradesCollection || "executed-trades"
+      );
+
+      const activeTrades = await tradesCollection
+        .find({ status: "active" })
+        .toArray();
+
+      this.logger.info(
+        `📊 Retrieved ${activeTrades.length} active trades from MongoDB`
+      );
+      return activeTrades;
+    } catch (error) {
+      this.logger.error("Error retrieving active trades:", error);
+      return [];
+    }
+  }
+
+  async updateTradeStatus(
+    tradeId: string,
+    status: string,
+    exitData?: any
+  ): Promise<boolean> {
+    try {
+      const tradesCollection = this.getSignalFlowDb().collection(
+        this.config.tradesCollection || "executed-trades"
+      );
+
+      const updateDoc: any = {
+        status,
+        updatedAt: new Date(),
+      };
+
+      if (exitData) {
+        updateDoc.exitData = exitData;
+        updateDoc.exitedAt = new Date();
+      }
+
+      const { ObjectId } = require("mongodb");
+
+      const result = await tradesCollection.updateOne(
+        { _id: new ObjectId(tradeId) },
+        { $set: updateDoc }
+      );
+
+      if (result.matchedCount > 0) {
+        this.logger.info(`✅ Updated trade ${tradeId} status to ${status}`);
+        return true;
+      } else {
+        this.logger.warn(`⚠️ Trade ${tradeId} not found for status update`);
+        return false;
+      }
+    } catch (error) {
+      this.logger.error("Error updating trade status:", error);
+      return false;
+    }
+  }
+
+  async getTradeHistory(userId?: string, limit: number = 100): Promise<any[]> {
+    try {
+      const tradesCollection = this.getSignalFlowDb().collection(
+        this.config.tradesCollection || "executed-trades"
+      );
+
+      const query = userId ? { userId } : {};
+      const trades = await tradesCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .toArray();
+
+      this.logger.info(`📈 Retrieved ${trades.length} trades from history`);
+      return trades;
+    } catch (error) {
+      this.logger.error("Error retrieving trade history:", error);
+      return [];
+    }
   }
 }
 

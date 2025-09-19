@@ -39,14 +39,14 @@ export interface PositionSizingConfig {
  *
  * This service calculates dynamic position sizes based on:
  * 1. Safe balance of base trading token (USDC)
- * 2. User-defined percentage (default 20%)
+ * 2. User-defined percentage (default 10%)
  * 3. Minimum amount requirements
  * 4. Gas fee considerations
  * 5. DEX and Safe minimum limits
  */
 export class PositionSizingService {
   private defaultConfig: PositionSizingConfig = {
-    defaultPercentage: 20, // 20% of balance
+    defaultPercentage: 10, // 20% of balance
     minimumUsdAmount: 0.01, // $0.01 minimum for testing
     minimumGasReserve: "0.001", // 0.001 ETH for gas
     maxPositionPercentage: 80, // Max 80% of balance

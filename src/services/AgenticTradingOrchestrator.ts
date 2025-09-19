@@ -5,6 +5,7 @@ import DatabaseService from "./DatabaseService";
 import TradeStateManager from "./TradeStateManager";
 import TradeExecutionService from "./TradeExecutionService";
 import PriceMonitoringService from "./PriceMonitoringService";
+import TradeMonitoringService from "./TradeMonitoringService";
 import { ApiSignal, ProcessedSignal } from "./ApiSignalProcessor";
 
 interface AgenticConfig {
@@ -31,6 +32,7 @@ class AgenticTradingOrchestrator extends EventEmitter {
   private tradeStateManager: TradeStateManager;
   private tradeExecutionService: TradeExecutionService;
   private priceMonitoringService: PriceMonitoringService;
+  private tradeMonitoringService: TradeMonitoringService;
   private apiSignalProcessor: ApiSignalProcessor;
   private aiAgent: any; // The AI agent that makes all decisions
 
@@ -56,12 +58,20 @@ class AgenticTradingOrchestrator extends EventEmitter {
     this.tradeExecutionService = new TradeExecutionService();
     this.priceMonitoringService = new PriceMonitoringService();
 
+    // Initialize trade monitoring service
+    this.tradeMonitoringService = new TradeMonitoringService(
+      this.dbService,
+      this.tradeExecutionService,
+      this.priceMonitoringService
+    );
+
     // Initialize API signal processor
     this.apiSignalProcessor = new ApiSignalProcessor(
       this.dbService,
       this.tradeStateManager,
       this.tradeExecutionService,
       this.priceMonitoringService,
+      this.tradeMonitoringService,
       {
         positionSizeUsd: 1,
         maxDailyTrades: 20,
@@ -73,7 +83,7 @@ class AgenticTradingOrchestrator extends EventEmitter {
     );
 
     this.logger.info(
-      "🧠 Agentic trading services initialized with API signal processing"
+      "🧠 Agentic trading services initialized with comprehensive trade monitoring"
     );
   }
 
@@ -120,11 +130,12 @@ class AgenticTradingOrchestrator extends EventEmitter {
 
       // Start core services
       await this.priceMonitoringService.start();
+      await this.tradeMonitoringService.start();
       await this.apiSignalProcessor.start();
 
       this.isActive = true;
       this.logger.info(
-        "🧠 Agentic trading orchestrator started - AI is ready for API signals"
+        "🧠 Agentic trading orchestrator started - AI is ready for API signals with comprehensive trade monitoring"
       );
       this.emit("started");
     } catch (error) {
@@ -139,6 +150,7 @@ class AgenticTradingOrchestrator extends EventEmitter {
     try {
       // Stop all services
       await this.apiSignalProcessor.stop();
+      await this.tradeMonitoringService.stop();
       this.priceMonitoringService.stop();
       await this.dbService.disconnect();
 

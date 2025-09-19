@@ -70,20 +70,67 @@ class PriceMonitoringService extends EventEmitter {
 
   async getCurrentPrice(tokenSymbol: string): Promise<number | null> {
     try {
-      const tokenInfo = NetworkUtils.getTokenInfo(tokenSymbol);
+      // First try: Get token info from static TOKEN_MAP
+      let tokenInfo = NetworkUtils.getTokenInfo(tokenSymbol);
+      let coingeckoId = tokenInfo?.coingeckoId;
+
+      // Second try: If not in static map, query CoinGecko directly
       if (!tokenInfo) {
-        this.logger.error(`Token info not found for ${tokenSymbol}`);
+        this.logger.info(
+          `Token ${tokenSymbol} not in static TOKEN_MAP, querying CoinGecko directly...`
+        );
+
+        try {
+          // Search CoinGecko for the token symbol
+          const searchResponse = await axios.get(
+            `https://api.coingecko.com/api/v3/search?query=${tokenSymbol}`,
+            { timeout: 10000 }
+          );
+
+          const coins = searchResponse.data.coins || [];
+          const exactMatch = coins.find(
+            (coin: any) =>
+              coin.symbol?.toLowerCase() === tokenSymbol.toLowerCase()
+          );
+
+          if (exactMatch) {
+            coingeckoId = exactMatch.id;
+            this.logger.info(
+              `✅ Found ${tokenSymbol} on CoinGecko with ID: ${coingeckoId}`
+            );
+          } else {
+            this.logger.error(
+              `No exact match found for ${tokenSymbol} on CoinGecko`
+            );
+            return null;
+          }
+        } catch (searchError) {
+          const message =
+            searchError instanceof Error
+              ? searchError.message
+              : String(searchError);
+          this.logger.error(
+            `Error searching CoinGecko for ${tokenSymbol}: ${message}`
+          );
+          return null;
+        }
+      }
+
+      if (!coingeckoId) {
+        this.logger.error(`No CoinGecko ID found for ${tokenSymbol}`);
         return null;
       }
 
       const response = await axios.get(
-        `${this.COINGECKO_API_BASE}/simple/price?ids=${tokenInfo.coingeckoId}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true`,
+        `${this.COINGECKO_API_BASE}/simple/price?ids=${coingeckoId}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true`,
         { timeout: 10000 }
       );
 
-      const data = response.data[tokenInfo.coingeckoId];
+      const data = response.data[coingeckoId];
       if (!data) {
-        this.logger.error(`Price data not found for ${tokenSymbol}`);
+        this.logger.error(
+          `Price data not found for ${tokenSymbol} (CoinGecko ID: ${coingeckoId})`
+        );
         return null;
       }
 
@@ -95,9 +142,12 @@ class PriceMonitoringService extends EventEmitter {
       };
 
       this.priceCache.set(tokenSymbol, priceData);
+      this.logger.info(`✅ Price fetched for ${tokenSymbol}: $${data.usd}`);
       return data.usd;
     } catch (error) {
-      this.logger.error(`Error fetching price for ${tokenSymbol}:`, error);
+      const message =
+        error instanceof Error ? `${error.message}` : String(error);
+      this.logger.error(`Error fetching price for ${tokenSymbol}: ${message}`);
       return null;
     }
   }
@@ -161,7 +211,9 @@ class PriceMonitoringService extends EventEmitter {
       // Check price alerts
       await this.checkPriceAlerts();
     } catch (error) {
-      this.logger.error("Error in price monitoring:", error);
+      const message =
+        error instanceof Error ? `${error.message}` : String(error);
+      this.logger.error(`Error in price monitoring: ${message}`);
     }
   }
 
@@ -233,9 +285,10 @@ class PriceMonitoringService extends EventEmitter {
           this.removeTradeMonitoring(tradeId);
         }
       } catch (error) {
+        const message =
+          error instanceof Error ? `${error.message}` : String(error);
         this.logger.error(
-          `Error checking trade conditions for ${tradeId}:`,
-          error
+          `Error checking trade conditions for ${tradeId}: ${message}`
         );
       }
     }
@@ -270,9 +323,10 @@ class PriceMonitoringService extends EventEmitter {
           alertsToRemove.push(i);
         }
       } catch (error) {
+        const message =
+          error instanceof Error ? `${error.message}` : String(error);
         this.logger.error(
-          `Error checking price alert for ${alert.tokenId}:`,
-          error
+          `Error checking price alert for ${alert.tokenId}: ${message}`
         );
       }
     }

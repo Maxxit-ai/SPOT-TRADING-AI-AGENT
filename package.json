@@ -10,7 +10,9 @@
     "build": "tsc",
     "test": "jest",
     "lint": "eslint src/**/*.ts",
-    "format": "prettier --write src/**/*.ts"
+    "format": "prettier --write src/**/*.ts",
+    "test:trade-monitoring": "tsx --env-file=.env src/test-trade-monitoring-flow.ts",
+    "demo:trade-monitoring": "tsx --env-file=.env src/demo-trade-monitoring.ts"
   },
   "keywords": [
     "ai",

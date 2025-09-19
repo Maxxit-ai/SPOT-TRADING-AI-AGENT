@@ -5,6 +5,7 @@ import TradeStateManager from "./TradeStateManager";
 import TradeExecutionService from "./TradeExecutionService";
 import PriceMonitoringService from "./PriceMonitoringService";
 import DatabaseService from "./DatabaseService";
+import TradeMonitoringService from "./TradeMonitoringService";
 import { NetworkUtils } from "../utils/NetworkUtils";
 import TokenChainDetectionService from "./TokenChainDetectionService";
 import SafeChainValidationService from "./SafeChainValidationService";
@@ -65,6 +66,7 @@ class ApiSignalProcessor extends EventEmitter {
   private tradeStateManager: TradeStateManager;
   private tradeExecutionService: TradeExecutionService;
   private priceMonitoringService: PriceMonitoringService;
+  private tradeMonitoringService: TradeMonitoringService;
   private tokenChainService: TokenChainDetectionService;
   private safeValidationService: SafeChainValidationService;
   private positionSizingService: PositionSizingService;
@@ -77,6 +79,7 @@ class ApiSignalProcessor extends EventEmitter {
     tradeStateManager: TradeStateManager,
     tradeExecutionService: TradeExecutionService,
     priceMonitoringService: PriceMonitoringService,
+    tradeMonitoringService: TradeMonitoringService,
     config: TradingConfig
   ) {
     super();
@@ -85,13 +88,19 @@ class ApiSignalProcessor extends EventEmitter {
     this.tradeStateManager = tradeStateManager;
     this.tradeExecutionService = tradeExecutionService;
     this.priceMonitoringService = priceMonitoringService;
+    this.tradeMonitoringService = tradeMonitoringService;
     this.config = config;
+
+    // Connect TradeExecutionService with TradeMonitoringService
+    this.tradeExecutionService.setTradeMonitoringService(
+      this.tradeMonitoringService
+    );
 
     // Initialize enhanced services
     this.tokenChainService = new TokenChainDetectionService();
     this.safeValidationService = new SafeChainValidationService();
     this.positionSizingService = new PositionSizingService({
-      defaultPercentage: 20, // Use 20% of balance as requested
+      defaultPercentage: 10, // Use 10% of balance as requested
       minimumUsdAmount: 0.01,
       minimumGasReserve: "0.001",
       maxPositionPercentage: 80,

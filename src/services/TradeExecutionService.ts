@@ -23,15 +23,22 @@ interface SwapQuote {
   value: string;
   gas: string;
   gasPrice: string;
+  buyAmount: string; // amount of buy token in base units
 }
 
 class TradeExecutionService {
   private safeInstances = new Map<string, Safe>();
+  private tradeMonitoringService?: any; // Will be set after initialization
 
   constructor() {
     logger.info(
       "TradeExecutionService initialized with real Safe SDK patterns"
     );
+  }
+
+  setTradeMonitoringService(tradeMonitoringService: any): void {
+    this.tradeMonitoringService = tradeMonitoringService;
+    logger.info("TradeMonitoringService connected to TradeExecutionService");
   }
 
   /**
@@ -202,6 +209,7 @@ class TradeExecutionService {
         value: response.data.transaction.value || "0",
         gas: response.data.transaction.gas,
         gasPrice: response.data.transaction.gasPrice,
+        buyAmount: response.data.buyAmount,
       };
     } catch (error) {
       logger.error(`❌ 0x API call failed:`, {
@@ -392,10 +400,24 @@ class TradeExecutionService {
           (executeTxResponse.transactionResponse as any).hash || receipt?.hash;
 
         logger.info(`✅ Swap executed successfully: ${txHash}`);
+
+        // Format amountOut using buy token decimals (fallback 18)
+        const buyTokenInfo = NetworkUtils.getTokenInfo(buyToken);
+        const buyTokenDecimals = buyTokenInfo?.decimals || 18;
+        let formattedAmountOut: string;
+        try {
+          formattedAmountOut = ethers.formatUnits(
+            quote.buyAmount,
+            buyTokenDecimals
+          );
+        } catch (e) {
+          // fallback to raw sellAmount if formatting fails
+          formattedAmountOut = sellAmount;
+        }
         return {
           success: true,
           transactionHash: txHash,
-          amountOut: receipt?.logs?.[0]?.data || sellAmount, // Estimate from logs or fallback
+          amountOut: formattedAmountOut,
         };
       } else {
         throw new Error("Transaction execution failed");
@@ -578,6 +600,43 @@ class TradeExecutionService {
       }
 
       logger.info(`✅ Trade executed successfully: ${result.transactionHash}`);
+
+      // Store trade for monitoring if TradeMonitoringService is available
+      if (this.tradeMonitoringService && tradeData.signalMessage === "buy") {
+        try {
+          const monitoringData = {
+            tradeId: tradeData.tradeId || `trade_${Date.now()}`,
+            userId: tradeData.userId || "unknown",
+            safeAddress: tradeData.safeAddress,
+            networkKey: networkConfig.name || "arbitrum",
+            tokenSymbol: tradeData.tokenMentioned,
+            tokenMentioned: tradeData.tokenMentioned,
+            signalMessage: tradeData.signalMessage,
+            entryPrice: tradeData.currentPrice || 0,
+            tp1: tradeData.tp1 || 0,
+            tp2: tradeData.tp2 || 0,
+            sl: tradeData.sl || 0,
+            maxExitTime:
+              tradeData.maxExitTime ||
+              new Date(Date.now() + 24 * 60 * 60 * 1000), // Default 24h
+            entryTxHash: result.transactionHash,
+            entryAmount: result.amountOut || positionSizeAmount,
+            executedAt: new Date(),
+          };
+
+          await this.tradeMonitoringService.addTradeToMonitoring(
+            monitoringData
+          );
+          logger.info(
+            `📊 Trade added to monitoring system: ${monitoringData.tradeId}`
+          );
+        } catch (monitoringError) {
+          logger.error(
+            `⚠️ Failed to add trade to monitoring (trade still executed):`,
+            monitoringError
+          );
+        }
+      }
     } catch (error) {
       // logger.error(`❌ Trade execution failed: ${error}`);
       console.log(`❌ Trade execution failed: ${error}`);

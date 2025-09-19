@@ -176,6 +176,19 @@ export const TOKEN_MAP: Record<string, TokenInfo> = {
     },
     decimals: 18,
   },
+  // UNI: {
+  //   symbol: "UNI",
+  //   name: "Uniswap",
+  //   coingeckoId: "uniswap",
+  //   addresses: {
+  //     ethereum: "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+  //     arbitrum: "0xfa7f8980b0f1e64a2062791cc3b0871572f1f7f0",
+  //     optimism: "0x6fd9d7ad17242c41f7131d257212c54a0e816691",
+  //     polygon: "0xb33eaad8d922b1083446dc23f610c2567fb5180f",
+  //     base: "0xc3De830EA07524a0761646a6a4e4be0e114a3C83",
+  //   },
+  //   decimals: 18,
+  // },
 };
 
 export class NetworkUtils {
