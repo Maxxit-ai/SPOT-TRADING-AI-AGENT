@@ -34,6 +34,11 @@ interface MonitoredTrade {
   // Monitoring data
   lastPriceCheck?: Date;
   priceCheckCount: number;
+
+  // Trailing stop data
+  highestPriceSinceEntry: number;
+  trailingStopPrice: number;
+  trailingStopEnabled: boolean;
 }
 
 interface ExitCondition {
@@ -146,6 +151,10 @@ class TradeMonitoringService extends EventEmitter {
           executedAt: new Date(trade.executedAt || trade.createdAt),
           status: trade.status,
           priceCheckCount: 0,
+          // Initialize trailing stop data
+          highestPriceSinceEntry: trade.entryPrice || trade.currentPrice,
+          trailingStopPrice: (trade.entryPrice || trade.currentPrice) * 0.99, // 1% below entry
+          trailingStopEnabled: true,
         };
 
         this.monitoredTrades.set(trade._id.toString(), monitoredTrade);
@@ -191,6 +200,10 @@ class TradeMonitoringService extends EventEmitter {
             executedAt: new Date(trade.executedAt || trade.createdAt),
             status: trade.status,
             priceCheckCount: 0,
+            // Initialize trailing stop data
+            highestPriceSinceEntry: trade.entryPrice || trade.currentPrice,
+            trailingStopPrice: (trade.entryPrice || trade.currentPrice) * 0.99, // 1% below entry
+            trailingStopEnabled: true,
           };
 
           this.monitoredTrades.set(tradeId, monitoredTrade);
@@ -238,6 +251,11 @@ class TradeMonitoringService extends EventEmitter {
         executedAt: new Date(),
         status: "active",
         priceCheckCount: 0,
+        // Initialize trailing stop data
+        highestPriceSinceEntry: tradeData.entryPrice || tradeData.currentPrice,
+        trailingStopPrice:
+          (tradeData.entryPrice || tradeData.currentPrice) * 0.99, // 1% below entry
+        trailingStopEnabled: true,
       };
 
       this.monitoredTrades.set(mongoId, monitoredTrade);
@@ -285,6 +303,9 @@ class TradeMonitoringService extends EventEmitter {
       trade.lastPriceCheck = new Date();
       trade.priceCheckCount++;
 
+      // Update trailing stop data
+      this.updateTrailingStopData(trade, currentPrice);
+
       // Check exit conditions
       const exitCondition = this.checkExitConditions(trade, currentPrice);
 
@@ -297,7 +318,7 @@ class TradeMonitoringService extends EventEmitter {
         // Log monitoring status every 10 checks
         if (trade.priceCheckCount % 10 === 0) {
           this.logger.info(
-            `📊 Trade ${trade.tradeId}: Current: $${currentPrice}, TP1: $${trade.tp1}, SL: $${trade.sl}, Time left: ${this.getTimeRemaining(trade.maxExitTime)}`
+            `📊 Trade ${trade.tradeId}: Current: $${currentPrice}, TP1: $${trade.tp1}, SL: $${trade.sl}, Trailing: $${trade.trailingStopPrice.toFixed(4)}, Time left: ${this.getTimeRemaining(trade.maxExitTime)}`
           );
         }
       }
@@ -312,6 +333,38 @@ class TradeMonitoringService extends EventEmitter {
     } catch (error) {
       this.logger.error(`Error getting price for ${tokenSymbol}:`, error);
       return null;
+    }
+  }
+
+  private updateTrailingStopData(
+    trade: MonitoredTrade,
+    currentPrice: number
+  ): void {
+    if (!trade.trailingStopEnabled) return;
+
+    // For BUY positions: track highest price and update trailing stop
+    if (trade.signalMessage === "buy") {
+      if (currentPrice > trade.highestPriceSinceEntry) {
+        trade.highestPriceSinceEntry = currentPrice;
+        // Update trailing stop to 1% below the new highest price
+        trade.trailingStopPrice = currentPrice * 0.99;
+
+        this.logger.info(
+          `📈 Trailing stop updated for ${trade.tradeId}: New high $${currentPrice.toFixed(4)}, Trailing stop $${trade.trailingStopPrice.toFixed(4)}`
+        );
+      }
+    }
+    // For SELL positions: track lowest price and update trailing stop
+    else if (trade.signalMessage === "sell") {
+      if (currentPrice < trade.highestPriceSinceEntry) {
+        trade.highestPriceSinceEntry = currentPrice;
+        // Update trailing stop to 1% above the new lowest price
+        trade.trailingStopPrice = currentPrice * 1.01;
+
+        this.logger.info(
+          `📉 Trailing stop updated for ${trade.tradeId}: New low $${currentPrice.toFixed(4)}, Trailing stop $${trade.trailingStopPrice.toFixed(4)}`
+        );
+      }
     }
   }
 
@@ -332,7 +385,20 @@ class TradeMonitoringService extends EventEmitter {
 
     // For BUY positions
     if (trade.signalMessage === "buy") {
-      // Check Stop Loss
+      // Check Trailing Stop first (highest priority after Max Time)
+      if (
+        trade.trailingStopEnabled &&
+        currentPrice <= trade.trailingStopPrice
+      ) {
+        return {
+          type: "TRAILING_STOP",
+          currentPrice,
+          targetPrice: trade.trailingStopPrice,
+          triggered: true,
+        };
+      }
+
+      // Check Stop Loss (only if trailing stop hasn't triggered)
       if (currentPrice <= trade.sl) {
         return {
           type: "STOP_LOSS",
@@ -362,7 +428,20 @@ class TradeMonitoringService extends EventEmitter {
 
     // For SELL positions (if applicable)
     else if (trade.signalMessage === "sell") {
-      // Check Stop Loss (price goes up)
+      // Check Trailing Stop first (highest priority after Max Time)
+      if (
+        trade.trailingStopEnabled &&
+        currentPrice >= trade.trailingStopPrice
+      ) {
+        return {
+          type: "TRAILING_STOP",
+          currentPrice,
+          targetPrice: trade.trailingStopPrice,
+          triggered: true,
+        };
+      }
+
+      // Check Stop Loss (only if trailing stop hasn't triggered)
       if (currentPrice >= trade.sl) {
         return {
           type: "STOP_LOSS",
@@ -559,6 +638,9 @@ class TradeMonitoringService extends EventEmitter {
         tp1: trade.tp1,
         tp2: trade.tp2,
         sl: trade.sl,
+        trailingStopPrice: trade.trailingStopPrice,
+        highestPriceSinceEntry: trade.highestPriceSinceEntry,
+        trailingStopEnabled: trade.trailingStopEnabled,
         timeRemaining: this.getTimeRemaining(trade.maxExitTime),
         priceCheckCount: trade.priceCheckCount,
       })),
